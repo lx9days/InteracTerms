@@ -59,12 +59,13 @@ function related(t) {
 }
 function list() {
   const q = $('search').value.trim().toLowerCase()
-  const rows = data.terms.filter(t => (!$('paperFilter').value || t.paperId === $('paperFilter').value) &&
+  const rows = data.terms.filter(t => (!$('included').checked || papers.get(t.paperId)?.included) && (!$('paperFilter').value || t.paperId === $('paperFilter').value) &&
     (!$('categoryFilter').value || categories(t).includes($('categoryFilter').value)) &&
     (!$('scopeFilter').value || t.group === $('scopeFilter').value) &&
     (!$('statusFilter').value || status(t) === $('statusFilter').value) &&
     [t.term,...(t.lexicalComponents || []).map(c=>c.text),...componentsOf(t).map(c=>c.text)].some(text=>String(text || '').toLowerCase().includes(q)))
-  $('counts').textContent = 'Showing '+rows.length+' / '+data.terms.length+' usages · '+data.papers.length+' PDFs'
+  rows.sort((a,b)=>Number(Boolean(papers.get(b.paperId)?.included))-Number(Boolean(papers.get(a.paperId)?.included)))
+  $('counts').textContent = 'Showing '+rows.length+' / '+data.terms.length+' usages · '+data.papers.length+' indexed PDFs · '+data.papers.filter(p=>p.included).length+' PDFs included'
   $('browse').hidden = !$('paperFilter').value
   $('list').innerHTML = rows.map(t => '<tr data-id="'+esc(t.id)+'"><td><button>'+esc(t.term)+'</button></td>'+
     [t.source,t.classification,t.usage,t.location,displayStatus(status(t))].map(v => '<td>'+esc(v)+'</td>').join('')+'</tr>').join('') ||
@@ -76,7 +77,7 @@ if(data.sync) {
 }
 for(const name of [...new Set(data.terms.flatMap(categories))].sort()) $('categoryFilter').add(new Option(name,name))
 for (const p of data.papers) $('paperFilter').add(new Option(p.title,p.id))
-$('search').oninput = $('paperFilter').onchange = $('categoryFilter').onchange = $('scopeFilter').onchange = $('statusFilter').onchange = list
+$('included').onchange = $('search').oninput = $('paperFilter').onchange = $('categoryFilter').onchange = $('scopeFilter').onchange = $('statusFilter').onchange = list
 $('list').onclick = e => {const row=e.target.closest('tr[data-id]'); if(row) openRecord(records.get(row.dataset.id))}
 $('browse').onclick = () => openRecord(null,$('paperFilter').value)
 function canLeave() {return !dirty || confirm('You have unsaved notes. Discard changes and leave?')}
@@ -128,11 +129,16 @@ async function openRecord(t, id=t.paperId) {
   page=Math.max(1, Number(t?.page) || 1)
   $('page').value=page
   $('original').hidden=true
+  $('publisher').hidden=true
+  $('localFile').hidden=true
   $('file').value=''
   $('file').disabled=!paper
   if(!paper){$('message').textContent='No linked PDF';return}
-  const url=pdfFiles.get(id)
-  if(!url){$('message').textContent='Select your copy of this PDF to view the indexed evidence.';$('occurrences').hidden=true;return}
+  $('publisher').hidden=!paper.doi
+  $('publisher').href='https://doi.org/'+paper.doi
+  $('localFile').hidden=Boolean(paper.included)
+  const url=pdfFiles.get(id) || (paper.included && './pdfs/'+id+'.pdf')
+  if(!url){$('message').textContent='Full text is available through the publisher. Choose a matching local PDF to display the indexed highlights here.';$('occurrences').hidden=true;return}
   $('original').hidden=false
   $('message').textContent='Loading PDF…'
   try {
@@ -148,7 +154,7 @@ async function openRecord(t, id=t.paperId) {
     page=Math.min(page,doc.numPages)
     draw()
     if(t) showOccurrences()
-  } catch(e) {if(run===revision) $('message').textContent='PDF loading failed: '+e.message}
+  } catch(e) {if(run===revision){$('localFile').hidden=false;$('message').textContent='PDF loading failed: '+e.message}}
 }
 $('file').onchange=async()=>{
   const target=paper, file=$('file').files[0], run=revision
@@ -228,7 +234,7 @@ async function draw(){
     $('page').value=page
     $('page').max=doc.numPages
     $('pages').textContent='/ '+doc.numPages
-    $('original').href=pdfFiles.get(paper.id)+'#page='+page
+    $('original').href=(pdfFiles.get(paper.id) || './pdfs/'+paper.id+'.pdf')+'#page='+page
     let message='PDF Page '+page+' pages'
     if(current){
       const stored=anchors?.pages[page];
